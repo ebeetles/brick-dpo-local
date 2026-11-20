@@ -163,3 +163,36 @@
 - `make preview-builds RUN=... N=5` saves voxel plots of N random builds (seed 0) beside their ground truth
   (runs/<name>/preview_builds.png), a quick visual check while Blender rendering is unavailable. Only surface
   collisions are visible (red); interior collisions are hidden.
+
+## norsnorb_full250_s42: the No RS/no RB column of Table 1 (Ivan, evaluated 2026-11-20)
+
+- Source: Ivan's outputs.zip (`norsnorb_250_s42`), moved to `runs/norsnorb_full250_s42/`; Ivan's own metadata kept as
+  `run_meta_ivan.json`, his log as `generation.log`. **In Table 1.** `norsnorb_first100_s42` is superseded and excluded.
+- **Provenance differs from SPEC; state it in the report's replication paragraph:**
+  - Generated with Ivan's `brickrl/run_baseline.py` calling `brickgpt.models.BrickGPT` directly on **Kaggle**
+    (Python 3.13, T4), not with upstream `generate.py` in the pinned environment. `brickgpt`/`transformers` versions
+    are unknown; the log shows two crashes from a newer `transformers` before the completed session.
+  - Base model loaded from the ungated mirror `unsloth/Llama-3.2-1B-Instruct` (not `meta-llama/Llama-3.2-1B-Instruct`);
+    the model was loaded from a local merged checkpoint `/kaggle/working/brickgpt_merged`.
+  - `transformers` warned that this checkpoint's tokenizer has an incorrect regex pattern. **To confirm with Ivan**
+    whether tokenization matches the original tokenizer.
+  - Seed 42 per prompt, flags `--max_brick_rejections 0 --max_regenerations 0` (from his metadata). 20 of 250 builds
+    came from an earlier session's cache.
+- Results (n=250): valid 36.4% [30.4, 42.4], stable 12.8% [8.8, 17.2], mean stab. 0.960 [0.948, 0.970], min. stab.
+  0.322 [0.230, 0.416] (n=91 valid). Paper: 37.2 / 12.8 / 0.956 / 0.325; all inside our CIs.
+  Invalid: collision 152, collision + brick not in library 4, collision + out of bounds 1, out of bounds 2.
+  Time: median 26.0 s/build [23.8, 29.5], mean 35.7 s (6.2-291.4 s), corr. with brick count 0.992.
+  4 builds exceed the largest ground truth (367 bricks), up to 701 bricks (all collide).
+- Cross-check vs upstream evaluate: MATCH on 250/250 rows.
+- Overlap with first100: all 100 outputs identical, **and so are all 100 generation_times** (to full precision), so
+  first100 was cut from the same records, not re-generated. This confirms consistency, not reproducibility.
+
+## DPO smoke test (Ivan; `runs/dpo_smoke_test/`, excluded)
+
+- Pipeline check only: 30 steps on synthetic pairs, lr 5e-5, not a result. Contents: three `log_history.json` (DPO-seq,
+  DPO-prefix, DPO-local m=5) and a loss/reward-margin plot. No generated builds, so nothing for the eval pipeline.
+  Not a run folder (no generated_dataset.json, name not a run name), so it cannot reach any table, figure or RESULTS.md.
+- **For Ivan:** DPO-seq and DPO-prefix have identical losses and reward margins at every logged step (train_loss 0.5856
+  both); their log-probs differ by the same 28.947 for chosen and rejected. With pairs that share a prefix, the
+  prefix's log-probs cancel in the DPO loss, so the two variants are mathematically identical unless DPO-prefix
+  changes something else (pairs, weighting, or reference model). Worth resolving before Table 2 has both rows.
