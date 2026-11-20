@@ -81,6 +81,22 @@ def test_table1_only_rs_run_fills_only_rs_column():
     assert clip_row.count(TBD) == 3  # metric exists but undefined -> tbd, not 0
 
 
+def test_table1_caption_names_partial_column():
+    full = fake_run_set('full', {'stable': ci(0.958, 0.875, 1.0, n=24)}) | {
+        'prompts': 'first30', 'n_prompts': 24, 'expected_n': 30, 'partial': True}
+    tex = table1({'stability_convention': 'raw', 'run_sets': {'full_first30': full}})
+    assert 'RS + RB: partial run, $n=24$ of 30 (first30).' in tex
+    assert 'first30, n=24 of 30, s42' in tex  # column header
+    assert 'No RS, no RB: partial' not in tex
+
+
+def test_table1_gpu_caption_names_columns_without_gpu():
+    rs = fake_run_set('rs', {'stable': ci(0.23)})
+    full = fake_run_set('full', {'stable': ci(0.96)}) | {'gpu': None}
+    tex = table1({'stability_convention': 'raw', 'run_sets': {'rs_full250': rs, 'full_full250': full}})
+    assert 'GPU: NVIDIA A10G (RS + RB: not recorded).' in tex
+
+
 def test_unreportable_run_set_is_ignored():
     rs = fake_run_set('rs', {'stable': ci(0.5)}) | {'reportable': False}
     tex = table1({'stability_convention': 'raw', 'run_sets': {'rs_full250': rs}})

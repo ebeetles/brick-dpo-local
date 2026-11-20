@@ -71,9 +71,22 @@ def provenance(run_set: dict | None) -> str:
     return f'{run_set["prompts"]}, {n}, s{"/".join(map(str, run_set["seeds"]))}'
 
 
-def gpu_text(run_sets: list[dict | None]) -> str:
+def partial_note(labels: list[str], run_sets: list[dict | None]) -> str:
+    """Caption sentence naming every partial column, e.g. 'RS + RB: partial run, n=24 of 30 (first30).'"""
+    notes = []
+    for label, rs in zip(labels, run_sets):
+        if rs and rs.get('partial'):
+            of = f' of {rs["expected_n"]}' if rs.get('expected_n') and rs['n_prompts'] < rs['expected_n'] else ''
+            notes.append(f'{label}: partial run, $n={rs["n_prompts"]}${of} ({rs["prompts"]}).')
+    return ' '.join(notes) + ' ' if notes else ''
+
+
+def gpu_text(run_sets: list[dict | None], labels: list[str] | None = None) -> str:
+    """GPUs recorded in run_meta.json; with labels, also names columns that have a run but no recorded GPU."""
     gpus = sorted({rs['gpu'] for rs in run_sets if rs and rs['gpu']})
-    return ', '.join(gpus) if gpus else TBD
+    text = ', '.join(gpus) if gpus else TBD
+    unknown = [label for label, rs in zip(labels or [], run_sets) if rs and not rs['gpu']]
+    return text + (f' ({", ".join(unknown)}: not recorded)' if gpus and unknown else '')
 
 
 def tabular(columns: str, header: list[str], rows: list[list[str]], extra_header: list[str] | None = None) -> str:
@@ -135,7 +148,8 @@ def table1(agg: dict) -> str:
                r' Rates are over all $n$ prompts; stability, CLIP and DINO are over valid builds only. '
                r'Stability: min.\ stab.\ $=1-$max stress, mean stab.\ $=1-$mean stress (raw). Upstream caps stress '
                r'at 1, so raw equals clipped and an unstable build has min.\ stab.\ 0. '
-               f'GPU: {gpu_text(run_sets)}. '
+               f'GPU: {gpu_text(run_sets, [SETTINGS[s]["label"] for s in TABLE1_SETTINGS])}. '
+               + partial_note([SETTINGS[s]['label'] for s in TABLE1_SETTINGS], run_sets) +
                r'\tbd: not run yet; n/r: not reported in the paper.')
     # table* (both columns): three "paper / ours±CI" cells do not fit a 3.3 in column at 8 pt.
     return float_env('table*', 'tab:replication', caption, tabular('lccc', header, rows, extra),

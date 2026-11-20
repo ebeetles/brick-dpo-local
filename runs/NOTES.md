@@ -196,3 +196,27 @@
   both); their log-probs differ by the same 28.947 for chosen and rejected. With pairs that share a prefix, the
   prefix's log-probs cancel in the DPO loss, so the two variants are mathematically identical unless DPO-prefix
   changes something else (pairs, weighting, or reference model). Worth resolving before Table 2 has both rows.
+
+## rs_full250_s42 and full_first30_s42 (Megha, evaluated 2026-11-20)
+
+- Source: outputs_megha.zip, unpacked directly into incoming/ (no megha_outputs/ folder). Megha's metadata kept as
+  `rs_full250_s42/run_meta_megha.json`; logs as `generation.log`. Folder for RS+RB named `full_first30_s42`: `full` is
+  our name for the RS+RB setting (Megha's script calls it `rsrb`).
+- Same Kaggle setup as norsnorb_full250_s42: merged checkpoint `/kaggle/working/brickgpt_merged`, same transformers
+  tokenizer regex warning. Base model and generator script for Megha's runs not recorded (null; asked).
+- **RS only (Stable@1), full250, n=250:** valid 100%, stable 23.2% [18.4, 28.4] (paper 24.0), mean stab. 0.946
+  [0.934, 0.956] (0.947), min. stab. 0.217 [0.170, 0.269] (0.228). No invalid builds. Median 29.1 s/build
+  [26.4, 31.8], mean 42.3 s; mean 16.9 rejections per build. Cross-check MATCH 250/250.
+- **RS + RB, first30, partial n=24 of 30** (still running when copied; generated_dataset.json assembled by us from the 24
+  generations/ files, rows unchanged): valid 100%, stable 95.8% [87.5, 100] (23/24; paper 98.8), mean stab. 0.996
+  (0.996), min. stab. 0.916 [0.821, 0.977] (0.915). Median rollbacks 3 [2, 5] (paper 2), mean 7.6; 1 build hit the
+  100-rollback limit and is the only unstable one. Median 137.1 s/build [73.3, 254.7], mean 320.6 s, max 2,740 s
+  (paper median 40.8 s on their hardware). Builds are smaller than ground truth on the same 24 prompts (79.5 vs 121.7
+  bricks mean; RS-only 115.4): rollback truncates builds. Cross-check MATCH 24/24.
+- **Consistency checks across runs (same model, seed 42 per prompt):**
+  - All 5 RS+RB builds with 0 rollbacks are byte-identical to the RS-only build for the same prompt.
+  - RS-only and No RS/no RB outputs are identical for exactly the 91 prompts where the No RS/no RB build was valid,
+    and RS made 0 rejections on each of them: rejection sampling changes nothing until an invalid brick is proposed.
+- Table 1: all three columns filled; RS + RB with its actual n and a caption note "partial run, n=24 of 30 (first30)".
+  Because Tables 2/4 and Figure 2 take the BrickGPT row/point from the RS+RB run, they now also show the partial
+  n=24 run (their captions state the run and n).
