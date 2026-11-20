@@ -14,7 +14,7 @@ endif
 RUN ?= runs/gt_full250_s42
 SEED ?= 42
 
-.PHONY: setup env-check prompts fixture eval eval-new render report preview test
+.PHONY: setup env-check prompts fixture check-run eval eval-new render report preview test
 
 setup:
 	test -d $(UPSTREAM) || git clone https://github.com/AvaLovelace1/BrickGPT-experiments $(UPSTREAM)
@@ -34,6 +34,10 @@ prompts:
 fixture:
 	$(PY) -m midway.run_fixture --prompts full250 --seed $(SEED) --out runs/gt_full250_s$(SEED)
 	$(MAKE) eval RUN=runs/gt_full250_s$(SEED)
+
+# Validate a run folder's format without evaluating it (seconds; no Gurobi needed).
+check-run:
+	$(PY) -m midway.check_run --run $(RUN)
 
 eval:
 	$(PY) -m midway.per_sample_eval --run $(RUN)
