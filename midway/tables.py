@@ -108,6 +108,11 @@ TABLE1_ROWS = [  # (label, metric name, kind)
     ('Sec.\\ per build (median)', 'sec_per_build_median', 'sec'),
 ]
 TABLE1_SETTINGS = ['norsnorb', 'rs', 'full']
+RB_OFF = r'n/a (RB off)'  # rollbacks cell for settings with rollback off (max_regenerations 0)
+
+
+def rollback_off(setting: str) -> bool:
+    return SETTINGS[setting]['max_regenerations'] == 0
 
 
 def table1(agg: dict) -> str:
@@ -117,6 +122,9 @@ def table1(agg: dict) -> str:
     for label, name, kind in TABLE1_ROWS:
         row = [label]
         for setting, rs in zip(TABLE1_SETTINGS, run_sets):
+            if name == 'rollbacks_median' and rollback_off(setting):
+                row.append(RB_OFF)
+                continue
             paper = PAPER_TABLE1[setting].get(name)
             row.append(f'{fmt_paper(paper, kind)} / {fmt_ci(metric(rs, name), kind)}')
         rows.append(row)

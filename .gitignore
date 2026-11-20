@@ -9,3 +9,4 @@ report/*.aux
 report/*.log
 report/*.fls
 report/*.fdb_latexmk
+incoming/

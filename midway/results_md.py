@@ -13,6 +13,7 @@ from midway.config import BOOTSTRAP_N, PAPER_TABLE1, RUNS_DIR, SETTINGS
 # (label, metric name, scale, decimals)
 ROWS = [
     ('% valid', 'valid', 100, 1),
+    ('% valid by upstream rule (ignores brick library)', 'valid_upstream', 100, 1),
     ('% stable', 'stable', 100, 1),
     ('Mean stab. (1 - mean stress, valid builds)', 'mean_stab', 1, 3),
     ('Min. stab. (1 - max stress, valid builds)', 'min_stab', 1, 3),
@@ -65,11 +66,17 @@ def run_set_section(name: str, rs: dict, agg: dict) -> list[str]:
              f'- Runs: {", ".join(rs["runs"])}; prompt set {rs["prompts"]}; n = {n}; {rs["n_records"]} records; '
              f'seeds {rs["seeds"]}; GPU {rs["gpu"] or "n/a"}',
              f'- Invalid builds by reason: {reasons}',
+             f'- Builds valid by upstream\'s rule but invalid only because of a brick size not in the library: '
+             f'{rs.get("n_brick_type_only", 0)}',
              f'- Rows left out of the upstream cross-check (upstream would crash; counted invalid): '
              f'{rs.get("n_cross_check_excluded", 0)}', '',
              '| Metric | Ours | 95% CI | n | Paper | Ours - paper |', '|---|---|---|---|---|---|']
     paper = PAPER_TABLE1.get(rs['setting'], {})
+    rollback_off = SETTINGS.get(rs['setting'], {}).get('max_regenerations') == 0
     for row_label, metric, scale, decimals in ROWS:
+        if metric in ('rollbacks_median', 'hit_rb_limit') and rollback_off:
+            lines.append(f'| {row_label} | n/a (RB off) | n/a | n/a | n/a | n/a |')
+            continue
         lines.append(metric_row(row_label, rs['metrics'][metric], paper.get(metric), scale, decimals))
     return lines + ['']
 

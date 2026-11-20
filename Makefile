@@ -14,7 +14,7 @@ endif
 RUN ?= runs/gt_full250_s42
 SEED ?= 42
 
-.PHONY: setup env-check prompts fixture check-run eval eval-new render report preview test
+.PHONY: setup env-check prompts fixture check-run eval eval-new render preview-builds report preview test
 
 setup:
 	test -d $(UPSTREAM) || git clone https://github.com/AvaLovelace1/BrickGPT-experiments $(UPSTREAM)
@@ -50,6 +50,12 @@ render:
 	$(PY) -m midway.render --run $(RUN) --workers $(RENDER_WORKERS)
 	$(PY) -m midway.upstream_eval --generated_dataset_path $(RUN)/generated_dataset.json \
 	  --analyze_clip --analyze_img_similarity --ground_truth_render_dir $(GT_RENDERS)
+
+# Quick visual check without Blender: voxel plots of N random builds (seeded) beside their ground truth.
+N ?= 5
+PREVIEW_SEED ?= 0
+preview-builds:
+	$(PY) -m midway.preview_builds --run $(RUN) --n $(N) --seed $(PREVIEW_SEED)
 
 # Evaluate every run dir whose generation output (generated_dataset.json, or generations/ for an unfinished run)
 # is newer than its per_sample.jsonl. A failed eval does not stop the report: the run is listed as EXCLUDED instead.

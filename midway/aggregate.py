@@ -24,6 +24,7 @@ from midway.stats import cluster_bootstrap_ci
 # per_sample_eval stores None for them on invalid builds, and None values are ignored.
 METRICS = [
     ('valid', 'valid', 'mean'),                                 # % valid = mean of 0/1 over all prompts
+    ('valid_upstream', 'valid_upstream', 'mean'),               # % valid by upstream's rule (ignores brick library)
     ('stable', 'stable', 'mean'),                               # % stable = mean of 0/1 over all prompts
     ('mean_stab', f'mean_stab_{STABILITY_CONVENTION}', 'mean'),  # mean over valid builds of 1 - mean stress
     ('min_stab', f'min_stab_{STABILITY_CONVENTION}', 'mean'),    # mean over valid builds of 1 - max stress
@@ -139,6 +140,7 @@ def aggregate_run_set(run_dirs: list[Path]) -> dict:
         'n_parse_errors': sum(r.get('parse_error') is not None for r in records),
         'invalid_reasons': dict(Counter(r['invalid_reason'] for r in records if r.get('invalid_reason'))),
         'n_cross_check_excluded': sum(c.get('n_excluded', 0) for c in checks),
+        'n_brick_type_only': sum(bool(r.get('valid_upstream')) and not r['valid'] for r in records),
         'gpu': ', '.join(gpus) if gpus else None,
         'reportable': all(ok for ok, _ in statuses),
         'status': '; '.join(f'{d.name}: {why}' for d, (_, why) in zip(run_dirs, statuses)),

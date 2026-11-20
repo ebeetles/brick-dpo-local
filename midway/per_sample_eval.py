@@ -54,8 +54,10 @@ def invalid_reasons(build) -> list[str]:
 def stability_fields(build) -> dict:
     """Validity and stability of one build, using upstream BrickStructure only.
 
-    valid         no invalid_reasons: parsed, non-empty, no colliding bricks, no out-of-bounds bricks (upstream's
-                  rule), and every brick size is in the brick library.
+    valid_upstream  upstream's own rule (Evaluator._analyze_stability): parsed, non-empty, no colliding bricks,
+                  no out-of-bounds bricks. Ignores the brick library. Used for the cross-check.
+    valid         valid_upstream AND every brick size is in the brick library (our rule; used in all metrics).
+                  A build with valid_upstream but not valid differs only by brick type.
     invalid_reason  None if valid, else the reasons joined with '+', e.g. 'collision' or 'collision+out_of_bounds'.
     max_stress    max over voxels of upstream `stability_scores()` (a per-voxel stress map in [0, 1];
                   exactly 1 where the solver finds unbalanced force/torque). None if not valid.
@@ -65,8 +67,9 @@ def stability_fields(build) -> dict:
     *_clip        the same, clipped to [0, 1]. Kept for the convention check (SPEC §6.4).
     """
     reasons = invalid_reasons(build)
+    valid_upstream = set(reasons) <= {'brick_not_in_library'}
     if reasons:
-        return {'valid': False, 'invalid_reason': '+'.join(reasons), 'stable': False,
+        return {'valid_upstream': valid_upstream, 'valid': False, 'invalid_reason': '+'.join(reasons), 'stable': False,
                 'max_stress': None, 'mean_stress': None,
                 'min_stab_raw': None, 'mean_stab_raw': None, 'min_stab_clip': None, 'mean_stab_clip': None}
 
@@ -75,6 +78,7 @@ def stability_fields(build) -> dict:
     max_stress = float(scores.max())
     mean_stress = float(scores[build.voxel_occupancy > 0].mean())
     return {
+        'valid_upstream': True,
         'valid': True,
         'invalid_reason': None,
         'stable': max_stress < 1.0,
@@ -212,12 +216,15 @@ def run_upstream_evaluate(check_dir: Path, rows: list[dict]) -> tuple[dict, dict
 def compare_with_upstream(records: list[dict], upstream_stability: dict, upstream_time: dict) -> dict:
     """Compare our counts to upstream's on the same rows. Counts and mean brick count must match exactly.
 
+    Validity is compared using `valid_upstream` (upstream's own rule). On the rows given to upstream it equals our
+    `valid`, because builds that differ only by brick type crash upstream and are left out (upstream_crash_reason).
+
     Upstream's `stable`/`valid` object_id lists are NOT compared: upstream zips results from
     `imap_unordered` with the dataset in input order, so those lists can be misaligned. Counts are unaffected.
     Upstream's mean_max_stability / mean_mean_stability (mean stress over valid builds) are compared to 1e-9,
     because the two sides add the same numbers in a different order.
     """
-    valid = [r for r in records if r['valid']]
+    valid = [r for r in records if r['valid_upstream']]
     ours = {
         'n_total': len(records),
         'n_valid': len(valid),
@@ -243,8 +250,8 @@ def upstream_crash_reason(record: dict) -> str | None:
     """
     if record['parse_error']:
         return f'unparseable: {record["parse_error"]}'
-    if record['invalid_reason'] == 'brick_not_in_library':
-        return 'brick size not in the brick library, otherwise valid'
+    if record['valid_upstream'] and not record['valid']:
+        return 'valid by upstream\'s rule but a brick size is not in the library (upstream\'s solver raises)'
     return None
 
 
@@ -255,6 +262,8 @@ def cross_check(run_dir: Path, rows: list[dict], records: list[dict], source: st
       match        True only if upstream ran and agreed on every compared number.
       n_rows       rows in the run;  n_checked: rows given to upstream;  n_excluded / excluded: rows upstream would
                    crash on (object_id + reason; see upstream_crash_reason). They still count as invalid in our metrics.
+      n_brick_type_only  rows valid by upstream's rule but invalid by ours only because of a brick size not in the
+                   library (these are among the excluded rows).
       source       which file the rows came from (generated_dataset.json, or generations/ for a partial run).
       error        None, or why upstream could not be run.
     """
@@ -262,7 +271,8 @@ def cross_check(run_dir: Path, rows: list[dict], records: list[dict], source: st
                 if upstream_crash_reason(r)]
     kept = [(row, r) for row, r in zip(rows, records) if not upstream_crash_reason(r)]
     result = {'match': False, 'n_rows': len(rows), 'n_checked': len(kept), 'n_excluded': len(excluded),
-              'excluded': excluded, 'source': source, 'error': None, 'ours': None, 'upstream': None}
+              'excluded': excluded, 'n_brick_type_only': sum(r['valid_upstream'] and not r['valid'] for r in records),
+              'source': source, 'error': None, 'ours': None, 'upstream': None}
     if not kept:
         result['error'] = 'no parseable rows to cross-check'
         return result
@@ -331,6 +341,7 @@ def print_cross_check(result: dict) -> None:
               f'invalid in our metrics and were left out of the upstream cross-check:')
         for row in result['excluded'][:10]:
             print(f'  {row["object_id"]}: {row["reason"]}')
+    print(f'Builds valid by upstream\'s rule but invalid only because of brick type: {result["n_brick_type_only"]}')
     if result['error']:
         print(f'CROSS-CHECK COULD NOT RUN: {result["error"]}', file=sys.stderr)
         return

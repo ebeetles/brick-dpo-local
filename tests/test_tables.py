@@ -53,7 +53,16 @@ def test_table1_no_runs_all_ours_tbd():
     body = tex.split(r'\midrule', 1)[1].split(r'\bottomrule')[0]
     for row in filter(str.strip, body.split(r'\\')):
         for cell in row.split('&')[1:]:  # skip the row label; every other cell is "paper / ours"
+            if cell.strip() == 'n/a (RB off)':
+                continue
             assert cell.rsplit('/', 1)[1].strip() == TBD
+
+
+def test_table1_rollbacks_na_when_rollback_off():
+    rollbacks = next(line for line in table1(EMPTY).splitlines() if line.startswith('Rollbacks'))
+    norsnorb, rs, full = [c.strip() for c in rollbacks.rstrip('\\ ').split('&')[1:]]
+    assert norsnorb == rs == 'n/a (RB off)'
+    assert full == f'2.0 / {TBD}'
 
 
 def test_table1_only_rs_run_fills_only_rs_column():

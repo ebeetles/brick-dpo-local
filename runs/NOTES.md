@@ -10,6 +10,21 @@
   exhausted memory. DINO additionally needs ground-truth renders, which the authors did not release, so it would
   use our own GT renders and not be directly comparable to the paper. Details under "Rendering, CLIP, DINO" below.
 
+## Seeding: upstream resets the seed before every prompt (for the report)
+
+- Upstream `generate.py` (`BrickGenerator._generate_bricks`, line 104) calls `transformers.set_seed(seed)` before
+  generating **each** prompt, with the same seed (default 42) for every prompt. So every prompt starts sampling from
+  the same RNG state, rather than one random stream running through the whole prompt set.
+- Consequences for the report:
+  - Near-identical prompts can produce identical builds. Observed in `norsnorb_first100_s42`: four paraphrases of
+    "rectangular table with a flat top and four legs" gave the same 61-brick build.
+  - Samples across prompts are not fully independent. Our bootstrap CIs resample prompts as if independent, so
+    they may be slightly too narrow when many prompts are near-duplicates.
+  - A "seed" is a property of the whole run: seeds 42/43/44 give three samples per prompt, and our cluster
+    bootstrap keeps a prompt's seeds together.
+  - Our runs use upstream's generator unchanged, so this matches how the paper's numbers were produced (assuming
+    the authors used this code).
+
 ## Environment (2026-11-20, Elwin's laptop: Apple M3 Max, macOS, no CUDA)
 
 - Upstream `BrickGPT-experiments` @ `7c3cce4b`, `brickgpt` @ `59cca62b` (verified by `make env-check`).
@@ -135,3 +150,16 @@
   library is now an invalid reason, not a parse error (rows are left out of the cross-check only if upstream would
   really crash); `partial` / `exclude_from_tables` in run_meta.json; check-run warns on null provenance fields;
   run dirs with an unrecognized name are listed loudly instead of being skipped with one line.
+
+## Validity: our rule vs upstream's rule (2026-11-20)
+
+- Every per-sample record has `valid_upstream` (upstream's rule: parsed, non-empty, no collisions, no out-of-bounds;
+  ignores the brick library) and `valid` (ours: the same AND every brick size is in the library). All reported
+  metrics use `valid`. The cross-check compares upstream's counts with `valid_upstream`.
+- Builds that differ only by brick type (`valid_upstream` but not `valid`) make upstream's stability solver raise,
+  so they are left out of the cross-check; their count is `n_brick_type_only` in cross_check.json and RESULTS.md.
+  `norsnorb_first100_s42` has 0 (its 3 off-library builds also collide).
+- Rollbacks print as "n/a (RB off)" in Table 1 and RESULTS.md for the No RS/no RB and RS-only settings.
+- `make preview-builds RUN=... N=5` saves voxel plots of N random builds (seed 0) beside their ground truth
+  (runs/<name>/preview_builds.png), a quick visual check while Blender rendering is unavailable. Only surface
+  collisions are visible (red); interior collisions are hidden.

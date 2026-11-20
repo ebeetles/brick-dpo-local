@@ -46,6 +46,8 @@ def test_unparseable_row_is_invalid_with_parse_error(output, reason):
 def test_invalid_reason(output, reason):
     record = evaluate_row(row('o1', output), setting='rs', seed=42, max_regenerations=0)
     assert record['parse_error'] is None and record['valid'] is False and record['invalid_reason'] == reason
+    # upstream's rule ignores the brick library: only a build whose sole problem is brick type is upstream-valid
+    assert record['valid_upstream'] is (reason == 'brick_not_in_library')
     assert record['n_bricks'] == len([line for line in output.splitlines() if line.strip()])  # still counted
 
 
@@ -85,6 +87,8 @@ def test_partial_run_with_unparseable_row_end_to_end(tmp_path):
     assert check['match'] is True
     assert (check['n_rows'], check['n_checked'], check['n_excluded']) == (5, 3, 2)
     assert [x['object_id'] for x in check['excluded']] == ['c', 'd']
+    assert check['n_brick_type_only'] == 1  # row d: a non-colliding 3x1, valid by upstream's rule only
+    assert check['ours']['n_valid'] == check['upstream']['n_valid'] == 2  # rows a, b (e collides)
     assert check['source'].startswith('generations/')
 
     reportable, note = run_status(run)
@@ -94,6 +98,7 @@ def test_partial_run_with_unparseable_row_end_to_end(tmp_path):
     assert rs['reportable'] and rs['partial'] and rs['n_prompts'] == 5 and rs['expected_n'] == 7
     assert rs['metrics']['valid']['n'] == 5 and rs['metrics']['valid']['mean'] == pytest.approx(2 / 5)
     assert rs['invalid_reasons'] == {'unparseable': 1, 'brick_not_in_library': 1, 'collision+brick_not_in_library': 1}
+    assert rs['n_brick_type_only'] == 1 and rs['metrics']['valid_upstream']['mean'] == pytest.approx(3 / 5)
     assert provenance(rs) == 'subset7, n=5 of 7, s42'
 
     # Excluding the run on purpose keeps it out of the tables, with the reason in its status.
