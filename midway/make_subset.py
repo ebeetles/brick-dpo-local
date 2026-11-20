@@ -1,6 +1,7 @@
 """Prompt sets (SPEC §6.2).
 
 full250   upstream src/brickgpt_experiments/data/eval_dataset.json (250 prompts, all labeled is_stable == 1).
+firstN    the first N prompts of full250, in eval_dataset order (no file; read from full250).
 subsetN   N prompts drawn from full250 with random.Random(0), kept in full250 order, written to
           runs/prompts/subset{N}.json with the same schema. Subsets are part of the experiment definition:
           an existing subset file is never overwritten.
@@ -18,15 +19,19 @@ from midway.config import EVAL_DATASET, PROMPTS_DIR
 
 
 def prompts_path(name: str) -> Path:
-    """Path of a prompt-set file: 'full250' or 'subsetN'."""
+    """Path of a prompt-set file: 'full250' or 'subsetN' (firstN has no file of its own; see load_prompts)."""
     if name == 'full250':
         return EVAL_DATASET
     if re.fullmatch(r'subset\d+', name):
         return PROMPTS_DIR / f'{name}.json'
-    raise ValueError(f'Unknown prompt set {name!r}; expected full250 or subsetN')
+    raise ValueError(f'Prompt set {name!r} has no file; expected full250 or subsetN')
 
 
 def load_prompts(name: str) -> list[dict]:
+    """Prompts of a prompt set: full250, subsetN, or firstN (first N prompts of full250 in order)."""
+    first = re.fullmatch(r'first(\d+)', name)
+    if first:
+        return json.loads(EVAL_DATASET.read_text())[:int(first.group(1))]
     return json.loads(prompts_path(name).read_text())
 
 

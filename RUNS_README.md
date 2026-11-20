@@ -33,6 +33,7 @@ The folder name is how eval knows what the run is. Use exactly these values:
 |---|---|
 | `full250` | default (`src/brickgpt_experiments/data/eval_dataset.json` in upstream) |
 | `subset50` | `runs/prompts/subset50.json` (committed; never regenerate it) |
+| `firstN` | the first N prompts of full250 in eval_dataset order (e.g. `first100` for a pipeline test) |
 
 `seed`: upstream `--seed`, default 42. Later seeds: 43, 44.
 
@@ -53,7 +54,8 @@ Upstream writes these automatically; just don't strip anything.
 | `rejection_reasons` | BrickGPT runs | object of counts, e.g. `{"collision": 3}` |
 
 Missing optional fields become null (shown as `\tbd`), never 0. Unparseable outputs never crash eval: they are
-counted invalid and listed in RESULTS.md.
+counted invalid and listed in RESULTS.md. Builds that use a brick size not in the brick library (e.g. `3x1`, which
+can happen when rejection sampling is off) are counted invalid with reason `brick_not_in_library`.
 
 ## run_meta.json
 
@@ -79,6 +81,12 @@ All fields optional, but these appear in the report (GPU in the Table 1 caption,
 
 `setting`, `prompts` and `seed` must agree with the folder name (check-run errors if not). If you change
 `--max_regenerations` from the default, add `"max_regenerations": N` (used for the "hit rollback limit" metric).
+Use `null` for anything you don't know; never guess. Two optional control fields:
+
+- `"partial": true`: the run covers only part of what was planned (e.g. `first100` of a 250-prompt run).
+  Tables label its n as partial.
+- `"exclude_from_tables": "<reason>"`: evaluate and cross-check the run, but keep it out of tables and figures
+  (e.g. a pipeline test). The reason is printed in `make report` and at the top of RESULTS.md.
 
 ## Setup gotchas (upstream `uv sync` does not work as written)
 

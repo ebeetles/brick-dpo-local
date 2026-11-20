@@ -9,8 +9,9 @@ Output: runs/<name>/per_sample.jsonl (one record per prompt) and runs/<name>/cro
 Missing or undefined values are None (null in JSON), never 0. A row whose output cannot be parsed
 (see shapes.parse_build_checked) never crashes the evaluation: it gets valid=False and a `parse_error` reason.
 
-Cross-check: upstream `evaluate` is run on the parseable rows only (it would crash on the others), in
-runs/<name>/cross_check/. cross_check.json records how many rows were excluded from it and why.
+Cross-check: upstream `evaluate` is run on every row it can handle, in runs/<name>/cross_check/. It crashes on
+unparseable rows and on builds that pass its own validity checks but contain a brick size not in the library,
+so those rows are left out; cross_check.json records how many and why.
 
 Run:  make eval RUN=runs/<name>
 """
@@ -27,17 +28,35 @@ from pathlib import Path
 
 import numpy as np
 
-from midway.config import REPO_ROOT, SETTINGS
-from midway.shapes import footprint, frac_1x1, height, parse_build, parse_build_checked, voxel_iou
+from midway.config import REPO_ROOT, RUN_NAME_PATTERN, SETTINGS
+from midway.shapes import (footprint, frac_1x1, height, parse_build, parse_build_checked, sizes_not_in_library,
+                           voxel_iou)
 
 
 # ---------------------------------------------------------------- stability (upstream physics)
 
-def stability_fields(build) -> dict:
-    """Validity and stability of one parsed build, using upstream BrickStructure only.
+def invalid_reasons(build) -> list[str]:
+    """Why a build is invalid; an empty list means valid.
 
-    valid         build parsed, is non-empty, has no colliding bricks and no out-of-bounds bricks
-                  (same rule as upstream Evaluator._analyze_stability).
+    'unparseable' (upstream's parser failed), 'empty', 'collision', 'out_of_bounds' (upstream's rule in
+    Evaluator._analyze_stability), plus 'brick_not_in_library' (e.g. a 3x1: upstream's stability code cannot
+    handle it). A build can have several reasons.
+    """
+    if build is None:
+        return ['unparseable']
+    if len(build) == 0:
+        return ['empty']
+    checks = [('collision', build.has_collisions()), ('out_of_bounds', build.has_out_of_bounds_bricks()),
+              ('brick_not_in_library', bool(sizes_not_in_library(build)))]
+    return [name for name, failed in checks if failed]
+
+
+def stability_fields(build) -> dict:
+    """Validity and stability of one build, using upstream BrickStructure only.
+
+    valid         no invalid_reasons: parsed, non-empty, no colliding bricks, no out-of-bounds bricks (upstream's
+                  rule), and every brick size is in the brick library.
+    invalid_reason  None if valid, else the reasons joined with '+', e.g. 'collision' or 'collision+out_of_bounds'.
     max_stress    max over voxels of upstream `stability_scores()` (a per-voxel stress map in [0, 1];
                   exactly 1 where the solver finds unbalanced force/torque). None if not valid.
     mean_stress   mean of `stability_scores()` over occupied voxels. None if not valid.
@@ -45,8 +64,10 @@ def stability_fields(build) -> dict:
     min_stab_raw  1 - max_stress;  mean_stab_raw = 1 - mean_stress  (paper's stability s = 1 - stress).
     *_clip        the same, clipped to [0, 1]. Kept for the convention check (SPEC §6.4).
     """
-    if build is None or len(build) == 0 or build.has_collisions() or build.has_out_of_bounds_bricks():
-        return {'valid': False, 'stable': False, 'max_stress': None, 'mean_stress': None,
+    reasons = invalid_reasons(build)
+    if reasons:
+        return {'valid': False, 'invalid_reason': '+'.join(reasons), 'stable': False,
+                'max_stress': None, 'mean_stress': None,
                 'min_stab_raw': None, 'mean_stab_raw': None, 'min_stab_clip': None, 'mean_stab_clip': None}
 
     with contextlib.redirect_stdout(io.StringIO()):  # upstream/Gurobi print license banners
@@ -55,6 +76,7 @@ def stability_fields(build) -> dict:
     mean_stress = float(scores[build.voxel_occupancy > 0].mean())
     return {
         'valid': True,
+        'invalid_reason': None,
         'stable': max_stress < 1.0,
         'max_stress': max_stress,
         'mean_stress': mean_stress,
@@ -71,7 +93,7 @@ def evaluate_row(row: dict, setting: str | None, seed: int | None, max_regenerat
     """Build the per-sample record for one row of generated_dataset.json.
 
     n_bricks         number of bricks parsed (None if the output could not be parsed).
-    parse_error      None, or why the output could not be parsed (then valid=False and all physics fields None).
+    parse_error      None, or why upstream's parser failed (then valid=False and every build field is None).
     height           top layer index + 1.   footprint: occupied (x, y) cells, top-down.
     frac_1x1         share of bricks that are 1x1.
     voxel_iou_gt     IoU of 20^3 occupancy vs the prompt's ground-truth build (messages[-1]['content']).
@@ -148,7 +170,7 @@ def run_info(run_dir: Path) -> dict:
     """
     meta_path = run_dir / 'run_meta.json'
     meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
-    match = re.fullmatch(r'(?P<setting>[a-z]+)_(?P<prompts>full250|subset\d+)_s(?P<seed>\d+)', run_dir.name)
+    match = re.fullmatch(RUN_NAME_PATTERN, run_dir.name)
     from_name = match.groupdict() if match else {}
 
     setting = meta.get('setting', from_name.get('setting'))
@@ -212,18 +234,33 @@ def compare_with_upstream(records: list[dict], upstream_stability: dict, upstrea
     return {'ours': ours, 'upstream': theirs, 'match': exact and close}
 
 
+def upstream_crash_reason(record: dict) -> str | None:
+    """Why upstream `evaluate` would crash on this row, or None if it can evaluate it.
+
+    Upstream parses every row (crash: parse_error), then checks empty/collision/out-of-bounds and only then calls the
+    stability solver, which raises on brick sizes not in the library. So a not-in-library build crashes upstream
+    only if it is otherwise valid; one that also collides is simply invalid for upstream too.
+    """
+    if record['parse_error']:
+        return f'unparseable: {record["parse_error"]}'
+    if record['invalid_reason'] == 'brick_not_in_library':
+        return 'brick size not in the brick library, otherwise valid'
+    return None
+
+
 def cross_check(run_dir: Path, rows: list[dict], records: list[dict], source: str) -> dict:
     """Cross-check our records against upstream `evaluate`, on the parseable rows only.
 
     Returns the cross_check.json content:
       match        True only if upstream ran and agreed on every compared number.
-      n_rows       rows in the run;  n_checked: rows given to upstream;  n_excluded / excluded: unparseable rows
-                   (object_id + parse_error), which upstream would crash on. They still count as invalid in our metrics.
+      n_rows       rows in the run;  n_checked: rows given to upstream;  n_excluded / excluded: rows upstream would
+                   crash on (object_id + reason; see upstream_crash_reason). They still count as invalid in our metrics.
       source       which file the rows came from (generated_dataset.json, or generations/ for a partial run).
       error        None, or why upstream could not be run.
     """
-    excluded = [{'object_id': r['object_id'], 'parse_error': r['parse_error']} for r in records if r['parse_error']]
-    kept = [(row, r) for row, r in zip(rows, records) if not r['parse_error']]
+    excluded = [{'object_id': r['object_id'], 'reason': upstream_crash_reason(r)} for r in records
+                if upstream_crash_reason(r)]
+    kept = [(row, r) for row, r in zip(rows, records) if not upstream_crash_reason(r)]
     result = {'match': False, 'n_rows': len(rows), 'n_checked': len(kept), 'n_excluded': len(excluded),
               'excluded': excluded, 'source': source, 'error': None, 'ours': None, 'upstream': None}
     if not kept:
@@ -290,10 +327,10 @@ def main() -> int:
 def print_cross_check(result: dict) -> None:
     """Human-readable cross-check report; loud when rows were excluded or the check failed."""
     if result['n_excluded']:
-        print(f'NOTE: {result["n_excluded"]} of {result["n_rows"]} rows could not be parsed. They count as invalid in our '
-              f'metrics and were left out of the upstream cross-check (upstream would crash on them):')
+        print(f'NOTE: {result["n_excluded"]} of {result["n_rows"]} rows would crash upstream evaluate. They count as '
+              f'invalid in our metrics and were left out of the upstream cross-check:')
         for row in result['excluded'][:10]:
-            print(f'  {row["object_id"]}: {row["parse_error"]}')
+            print(f'  {row["object_id"]}: {row["reason"]}')
     if result['error']:
         print(f'CROSS-CHECK COULD NOT RUN: {result["error"]}', file=sys.stderr)
         return

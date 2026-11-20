@@ -13,12 +13,12 @@ from brickgpt.data import BrickStructure
 def parse_build_checked(text) -> tuple[BrickStructure | None, str | None]:
     """Parse build text (one `HxW (x,y,z)` brick per line) with upstream's parser.
 
-    Returns (build, None) on success, or (None, reason) for anything upstream `evaluate` would crash on:
+    Returns (build, None) on success, or (None, reason) when upstream's parser itself fails:
     - the output is missing or not text;
     - an ill-formatted line (upstream raises ValueError);
-    - a brick with z >= 20 (upstream indexes past the 20^3 grid: IndexError);
-    - a brick size not in the brick library, e.g. 3x3 (parses, but upstream's stability code raises).
-    Bricks with x or y outside the grid parse fine; they make the build invalid (out of bounds), not unparseable.
+    - a brick with z >= 20 (upstream indexes past the 20^3 grid: IndexError).
+    Bricks with x or y outside the grid, and brick sizes not in the library (e.g. 3x1), parse fine; they make the
+    build invalid (see per_sample_eval.invalid_reasons), not unparseable.
     """
     if not isinstance(text, str):
         return None, f'output is missing or not text ({type(text).__name__})'
@@ -30,9 +30,6 @@ def parse_build_checked(text) -> tuple[BrickStructure | None, str | None]:
         return None, f'ill-formatted line ({err})'
     except IndexError:
         return None, 'brick coordinate outside the 20x20x20 grid (z >= 20)'
-    not_in_library = sorted({f'{b.h}x{b.w}' for b in build.bricks if not in_brick_library(b)})
-    if not_in_library:
-        return None, f'brick size not in the brick library ({", ".join(not_in_library)})'
     return build, None
 
 
@@ -48,6 +45,11 @@ def in_brick_library(brick) -> bool:
         return True
     except ValueError:
         return False
+
+
+def sizes_not_in_library(build: BrickStructure) -> list[str]:
+    """Brick sizes in the build that upstream's brick library does not have, e.g. ['3x1']."""
+    return sorted({f'{b.h}x{b.w}' for b in build.bricks if not in_brick_library(b)})
 
 
 def occupied(build: BrickStructure) -> np.ndarray:

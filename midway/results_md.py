@@ -57,13 +57,16 @@ def table_use(name: str, rs: dict, agg: dict) -> str:
 
 def run_set_section(name: str, rs: dict, agg: dict) -> list[str]:
     label = SETTINGS.get(rs['setting'], {}).get('label', rs['setting'])
-    n = f'{rs["n_prompts"]} of {rs["expected_n"]} prompts (**partial run**)' if rs['partial'] else f'{rs["n_prompts"]} prompts'
+    n = f'{rs["n_prompts"]} prompts' + (' (**partial run**)' if rs['partial'] else '')
+    reasons = ', '.join(f'{k}: {v}' for k, v in sorted(rs.get('invalid_reasons', {}).items())) or 'none'
     lines = [f'## {name}: {label}', '',
              f'- In tables: {table_use(name, rs, agg)}',
              f'- Cross-check: {rs["status"]}',
              f'- Runs: {", ".join(rs["runs"])}; prompt set {rs["prompts"]}; n = {n}; {rs["n_records"]} records; '
              f'seeds {rs["seeds"]}; GPU {rs["gpu"] or "n/a"}',
-             f'- Unparseable builds (counted as invalid): {rs["n_parse_errors"]}', '',
+             f'- Invalid builds by reason: {reasons}',
+             f'- Rows left out of the upstream cross-check (upstream would crash; counted invalid): '
+             f'{rs.get("n_cross_check_excluded", 0)}', '',
              '| Metric | Ours | 95% CI | n | Paper | Ours - paper |', '|---|---|---|---|---|---|']
     paper = PAPER_TABLE1.get(rs['setting'], {})
     for row_label, metric, scale, decimals in ROWS:
@@ -77,10 +80,13 @@ def attention_lines(agg: dict) -> list[str]:
              if not rs['reportable']]
     items += [f'- **NOT EVALUATED: {d}** has generation output but no per_sample.jsonl (run `make eval RUN={d}`)'
               for d in agg.get('unevaluated', [])]
-    items += [f'- {name}: partial run, n = {rs["n_prompts"]} of {rs["expected_n"]} prompts; tables show this n'
+    items += [f'- **UNRECOGNIZED: {d}** was evaluated but its setting/prompt set is unknown '
+              f'(name it {{setting}}_{{prompts}}_s{{seed}})' for d in agg.get('unrecognized', [])]
+    items += [f'- {name}: partial run, n = {rs["n_prompts"]} prompts; tables show this n'
               for name, rs in agg['run_sets'].items() if rs['partial']]
-    items += [f'- {name}: {rs["n_parse_errors"]} unparseable builds counted as invalid and left out of the upstream '
-              f'cross-check' for name, rs in agg['run_sets'].items() if rs['n_parse_errors']]
+    items += [f'- {name}: {rs["n_cross_check_excluded"]} rows left out of the upstream cross-check (upstream would '
+              f'crash on them); counted as invalid' for name, rs in agg['run_sets'].items()
+              if rs.get('n_cross_check_excluded')]
     items += [f'- {name}: {table_use(name, rs, agg)}' for name, rs in agg['run_sets'].items()
               if rs['reportable'] and table_use(name, rs, agg).startswith('**NO')]
     return ['## Attention', ''] + (items or ['- Nothing excluded; no partial runs; no unparseable builds.']) + ['']

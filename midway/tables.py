@@ -58,11 +58,16 @@ def header_comment(run_sets: list[dict | None]) -> str:
 def provenance(run_set: dict | None) -> str:
     """'full250, n=250, s42' label for a column (actual n of prompts evaluated); \\tbd if there is no run.
 
-    A partial run shows 'n=180 of 250'. CIs in that column are computed from those n prompts.
+    A run with fewer prompts than its prompt set shows 'n=180 of 250'; a run marked partial in run_meta.json
+    (e.g. first100) shows 'n=100, partial'. CIs in that column are computed from those n prompts.
     """
     if run_set is None:
         return TBD
-    n = f'n={run_set["n_prompts"]}' + (f' of {run_set["expected_n"]}' if run_set.get('partial') else '')
+    n = f'n={run_set["n_prompts"]}'
+    if run_set.get('expected_n') and run_set['n_prompts'] < run_set['expected_n']:
+        n += f' of {run_set["expected_n"]}'
+    elif run_set.get('partial'):
+        n += ', partial'
     return f'{run_set["prompts"]}, {n}, s{"/".join(map(str, run_set["seeds"]))}'
 
 

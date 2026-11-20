@@ -1,0 +1,28 @@
+% DRAFT for Elwin to edit: Elwin's part of the Section 6 AI disclosure. Summarized from AI_USE.md.
+% Covers the handout's five required items (what, which tool, how, human parts, how checked) + future use.
+% [CONFIRM: ...] marks claims Elwin must make true (or delete) before submission.
+
+\paragraph{AI use: evaluation pipeline (Elwin).}
+\emph{What and which tool.} The evaluation code was written with Claude Code (Claude Opus 5.5): environment
+setup and checks, per-sample evaluation, bootstrap confidence intervals, the table/figure generators, a run-folder
+validator, and their unit tests. The assistant also diagnosed setup problems in the upstream code (packages with
+no macOS builds, a dependency that fails to install, the size limit of the free Gurobi license, and a rendering
+asset deleted at the pinned commit).
+\emph{How.} The team wrote a specification of the pipeline; the assistant implemented it in stages and stopped at
+fixed checkpoints for human decisions. It wraps the released BrickGPT code for parsing, validity and physics
+rather than reimplementing them, and it never edits upstream files.
+\emph{Human work.} Elwin defined the scope with the team, obtained the Gurobi academic license, confirmed that all
+250 ground-truth builds evaluate as valid and stable, chose the stability convention (raw $1-$stress), and decided
+to leave CLIP/DINO for after the midway. Interpreting the results and writing this report are human work.
+[CONFIRM: Elwin has read \texttt{per\_sample\_eval.py}, \texttt{stats.py} and \texttt{tables.py} end to end.]
+\emph{How we checked it.} (1) 49 unit tests on hand-built structures with hand-computed answers (e.g.\ voxel IoU,
+collisions, out-of-bounds bricks, bootstrap interval width). (2) A mandatory cross-check: our per-sample results
+must reproduce the upstream authors' own \texttt{evaluate} script; on the 250 ground-truth builds the valid and
+stable counts and the mean brick count match exactly. (3) Tables are generated only from runs that pass this
+check, and a test enforces that missing results render as a dash, never a number. (4) The assistant's claims
+about upstream behavior were verified against the code; one wrong claim (that RS-only generation needs
+Gurobi) was caught and corrected this way. [CONFIRM: three table cells spot-checked by hand against the
+per-sample file before submission.]
+\emph{Remaining stages.} We expect to keep using the assistant for evaluation code (e.g.\ extending it to the
+trained models' runs), under the same rules: unit tests, the upstream cross-check, and human review of every
+number that enters the report. Result interpretation and report prose stay human-written.

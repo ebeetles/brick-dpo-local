@@ -13,12 +13,11 @@ import re
 import sys
 from pathlib import Path
 
-from midway.config import SETTINGS
+from midway.config import PROMPT_SET_PATTERN, RUN_NAME_PATTERN, SETTINGS
 from midway.make_subset import load_prompts
-from midway.shapes import parse_build_checked
+from midway.shapes import parse_build_checked, sizes_not_in_library
 
 ERROR, WARN, OK = 'ERROR', 'WARN', 'OK'
-NAME_PATTERN = r'(?P<setting>[a-z]+)_(?P<prompts>full250|subset\d+)_s(?P<seed>\d+)'
 META_FIELDS = ['setting', 'flags', 'seed', 'prompts', 'upstream_sha', 'brickgpt_sha', 'hostname', 'gpu',
                'n_workers', 'start_time', 'end_time', 'exit_status']
 BRICKGPT_SETTINGS = ('norsnorb', 'rs', 'full')
@@ -30,10 +29,10 @@ def examples(ids: list) -> str:
 
 def check_name(run_dir: Path, meta: dict) -> tuple[list, dict]:
     """Folder name must be {setting}_{prompts}_s{seed}; run_meta.json (if any) must agree with it."""
-    match = re.fullmatch(NAME_PATTERN, run_dir.name)
+    match = re.fullmatch(RUN_NAME_PATTERN, run_dir.name)
     if not match:
-        return [(ERROR, f'folder name {run_dir.name!r} is not {{setting}}_{{prompts}}_s{{seed}}, '
-                        f'e.g. rs_full250_s42 (setting one of {", ".join(SETTINGS)})')], {}
+        return [(ERROR, f'folder name {run_dir.name!r} is not {{setting}}_{{prompts}}_s{{seed}}, e.g. rs_full250_s42; '
+                        f'setting is one of {", ".join(SETTINGS)}; prompts must match {PROMPT_SET_PATTERN}')], {}
     info = match.groupdict() | {'seed': int(match['seed'])}
     findings = []
     if info['setting'] not in SETTINGS:
@@ -84,7 +83,7 @@ def check_rows(rows: list, info: dict) -> list:
 
     try:
         prompt_ids = {p['object_id'] for p in load_prompts(info['prompts'])}
-    except FileNotFoundError:
+    except (FileNotFoundError, ValueError):
         return findings + [(ERROR, f'prompt set {info["prompts"]!r} not found (subsets live in runs/prompts/)')]
     unknown = [i for i in ids if i not in prompt_ids]
     if unknown:
@@ -104,6 +103,14 @@ def check_rows(rows: list, info: dict) -> list:
     if unparseable:
         findings.append((WARN, f'{len(unparseable)} outputs cannot be parsed (eval counts them invalid and leaves them '
                                f'out of the upstream cross-check), e.g. {unparseable[0][0]}: {unparseable[0][1]}'))
+    builds = [(r.get('object_id'), parse_build_checked(r.get('output'))[0]) for r in rows]
+    off_library = [(oid, b) for oid, b in builds if b is not None and sizes_not_in_library(b)]
+    if off_library:
+        would_crash = [oid for oid, b in off_library if not b.has_collisions() and not b.has_out_of_bounds_bricks()]
+        sizes = sorted({s for _, b in off_library for s in sizes_not_in_library(b)})
+        findings.append((WARN, f'{len(off_library)} builds use brick sizes not in the library ({", ".join(sizes)}): '
+                               f'counted invalid; {len(would_crash)} of them are otherwise valid, would crash upstream '
+                               f'evaluate, and are left out of the cross-check'))
     empty = [r.get('object_id') for r in rows if isinstance(r.get('output'), str) and not r['output'].strip()]
     if empty:
         findings.append((WARN, f'{len(empty)} empty outputs (counted invalid): {examples(empty)}'))
@@ -143,6 +150,13 @@ def check_meta(run_dir: Path) -> tuple[list, dict]:
     missing = [f for f in META_FIELDS if f not in meta]
     if missing:
         findings.append((WARN, f'run_meta.json lacks recommended fields: {", ".join(missing)}'))
+    unknown = [f for f in META_FIELDS if f in meta and meta[f] is None]
+    if unknown:
+        findings.append((WARN, f'run_meta.json has unknown (null) fields: {", ".join(unknown)} (shown as n/a in the report)'))
+    if meta.get('partial'):
+        findings.append((WARN, 'run_meta.json marks this run as partial (tables would label its n as partial)'))
+    if meta.get('exclude_from_tables'):
+        findings.append((WARN, f'run_meta.json excludes this run from tables on purpose: {meta["exclude_from_tables"]}'))
     if meta.get('exit_status') not in (None, 0):
         findings.append((WARN, f'run_meta.json exit_status={meta["exit_status"]}: the run did not finish cleanly'))
     return findings or [(OK, 'run_meta.json has all recommended fields')], meta

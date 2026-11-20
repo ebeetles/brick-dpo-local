@@ -13,7 +13,7 @@ Run:  make report   (this is its first step)
 """
 import json
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from midway.config import REPO_ROOT, RUNS_DIR, STABILITY_CONVENTION
@@ -55,8 +55,14 @@ def run_source(run_dir: Path) -> Path | None:
     return None
 
 
+def run_meta(run_dir: Path) -> dict:
+    path = run_dir / 'run_meta.json'
+    return json.loads(path.read_text()) if path.exists() else {}
+
+
 def run_status(run_dir: Path) -> tuple[bool, str]:
-    """(reportable, reason). Reportable = up-to-date per_sample.jsonl whose cross-check against upstream matched."""
+    """(reportable, reason). Reportable = up-to-date per_sample.jsonl whose cross-check against upstream matched,
+    and not excluded on purpose via `exclude_from_tables` in run_meta.json."""
     source = run_source(run_dir)
     per_sample = run_dir / 'per_sample.jsonl'
     if source is not None and source.stat().st_mtime > per_sample.stat().st_mtime:
@@ -71,14 +77,17 @@ def run_status(run_dir: Path) -> tuple[bool, str]:
         return False, 'cross-check MISMATCH with upstream evaluate'
     note = f'cross-check matched on {check.get("n_checked", "all")}/{check.get("n_rows", "all")} rows'
     if check.get('n_excluded'):
-        note += f' ({check["n_excluded"]} unparseable rows excluded from the check; counted as invalid)'
+        note += f' ({check["n_excluded"]} rows upstream would crash on were left out of the check; counted as invalid)'
+    excluded_on_purpose = run_meta(run_dir).get('exclude_from_tables')
+    if excluded_on_purpose:
+        return False, f'excluded on purpose (run_meta.json exclude_from_tables: {excluded_on_purpose}); {note}'
     return True, note
 
 
 def expected_n(prompts: str | None) -> int | None:
     """Number of prompts in a prompt set: full250 -> 250, subsetN -> N."""
-    match = re.fullmatch(r'full(\d+)|subset(\d+)', prompts or '')
-    return int(match.group(1) or match.group(2)) if match else None
+    match = re.fullmatch(r'(?:full|subset|first)(\d+)', prompts or '')
+    return int(match.group(1)) if match else None
 
 
 def summarize(records: list[dict]) -> dict:
@@ -91,16 +100,19 @@ def summarize(records: list[dict]) -> dict:
     return result
 
 
-def find_runs(runs_dir: Path = RUNS_DIR) -> dict[str, list[Path]]:
-    """Group evaluated run dirs into run sets keyed '{setting}_{prompts}'."""
-    run_sets = defaultdict(list)
+def find_runs(runs_dir: Path = RUNS_DIR) -> tuple[dict[str, list[Path]], list[str]]:
+    """Group evaluated run dirs into run sets keyed '{setting}_{prompts}'.
+
+    Also returns the evaluated dirs whose setting/prompt set cannot be identified (reported loudly, never dropped silently).
+    """
+    run_sets, unrecognized = defaultdict(list), []
     for per_sample in sorted(runs_dir.glob('*/per_sample.jsonl')):
         info = run_info(per_sample.parent)
         if info['setting'] is None or info['prompts'] is None:
-            print(f'Skipping {per_sample.parent}: cannot tell setting/prompt set (name it {{setting}}_{{prompts}}_s{{seed}})')
+            unrecognized.append(f'runs/{per_sample.parent.name}')
             continue
         run_sets[f'{info["setting"]}_{info["prompts"]}'].append(per_sample.parent)
-    return run_sets
+    return run_sets, unrecognized
 
 
 def aggregate_run_set(run_dirs: list[Path]) -> dict:
@@ -108,8 +120,9 @@ def aggregate_run_set(run_dirs: list[Path]) -> dict:
     info = run_info(run_dirs[0])
     records = [r for d in run_dirs for r in load_records(d)]
     statuses = [run_status(d) for d in run_dirs]
-    metas = [json.loads((d / 'run_meta.json').read_text()) if (d / 'run_meta.json').exists() else {}
-             for d in run_dirs]
+    metas = [run_meta(d) for d in run_dirs]
+    checks = [json.loads((d / 'cross_check.json').read_text()) if (d / 'cross_check.json').exists() else {}
+              for d in run_dirs]
     gpus = sorted({m.get('gpu') or m.get('gpu_name') for m in metas} - {None})
     n_prompts = len({r['object_id'] for r in records})
     return {
@@ -119,9 +132,13 @@ def aggregate_run_set(run_dirs: list[Path]) -> dict:
         'runs': [str(d.relative_to(REPO_ROOT)) if d.is_relative_to(REPO_ROOT) else str(d) for d in run_dirs],
         'n_prompts': n_prompts,
         'expected_n': expected_n(info['prompts']),
-        'partial': expected_n(info['prompts']) is not None and n_prompts < expected_n(info['prompts']),
+        # partial: fewer prompts than the prompt set, or marked partial in run_meta.json (e.g. first100 of a 250 run)
+        'partial': (expected_n(info['prompts']) is not None and n_prompts < expected_n(info['prompts']))
+                   or any(m.get('partial') for m in metas),
         'n_records': len(records),
         'n_parse_errors': sum(r.get('parse_error') is not None for r in records),
+        'invalid_reasons': dict(Counter(r['invalid_reason'] for r in records if r.get('invalid_reason'))),
+        'n_cross_check_excluded': sum(c.get('n_excluded', 0) for c in checks),
         'gpu': ', '.join(gpus) if gpus else None,
         'reportable': all(ok for ok, _ in statuses),
         'status': '; '.join(f'{d.name}: {why}' for d, (_, why) in zip(run_dirs, statuses)),
@@ -151,6 +168,8 @@ def print_loud_warnings(agg: dict) -> None:
     """Make every exclusion impossible to miss in `make report` output."""
     problems = [f'{name}: {rs["status"]}' for name, rs in agg['run_sets'].items() if not rs['reportable']]
     problems += [f'{d}: has generation output but was never evaluated (make eval RUN={d})' for d in agg['unevaluated']]
+    problems += [f'{d}: evaluated, but setting/prompt set unknown (name it {{setting}}_{{prompts}}_s{{seed}})'
+                 for d in agg['unrecognized']]
     if problems:
         bar = '!' * 100
         print(f'{bar}\nEXCLUDED FROM TABLES AND FIGURES:')
@@ -159,15 +178,18 @@ def print_loud_warnings(agg: dict) -> None:
         print(bar)
     for name, rs in agg['run_sets'].items():
         if rs['partial']:
-            print(f'NOTE {name}: partial run, {rs["n_prompts"]} of {rs["expected_n"]} prompts (tables show n={rs["n_prompts"]}).')
-        if rs['n_parse_errors']:
-            print(f'NOTE {name}: {rs["n_parse_errors"]} unparseable builds, counted as invalid.')
+            print(f'NOTE {name}: partial run, n={rs["n_prompts"]} prompts (tables show this n).')
+        if rs['n_cross_check_excluded']:
+            print(f'NOTE {name}: {rs["n_cross_check_excluded"]} rows left out of the upstream cross-check '
+                  f'(upstream would crash on them); counted as invalid.')
 
 
 def main() -> None:
+    run_sets, unrecognized = find_runs()
     agg = {'stability_convention': STABILITY_CONVENTION,
-           'run_sets': {name: aggregate_run_set(dirs) for name, dirs in find_runs().items()},
-           'unevaluated': unevaluated_run_dirs()}
+           'run_sets': {name: aggregate_run_set(dirs) for name, dirs in run_sets.items()},
+           'unevaluated': unevaluated_run_dirs(),
+           'unrecognized': unrecognized}
     out = RUNS_DIR / 'aggregate.json'
     out.write_text(json.dumps(agg, indent=2))
     print(f'Wrote {out}')

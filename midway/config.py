@@ -14,6 +14,11 @@ FIGURES_DIR = REPORT_DIR / 'figures'
 UPSTREAM_SHA = '7c3cce4b17b21d0cff75b750ce2227f32586b00b'  # AvaLovelace1/BrickGPT-experiments
 BRICKGPT_SHA = '59cca62b49363f3a18e01528a327f152df91bfea'  # brickgpt, as locked in upstream uv.lock
 
+# Prompt sets (SPEC §6.2): full250 = upstream eval_dataset.json; subsetN = runs/prompts/subsetN.json (random, seed 0);
+# firstN = the first N prompts of full250 in eval_dataset order (e.g. a pipeline test that stopped early).
+PROMPT_SET_PATTERN = r'full250|subset\d+|first\d+'
+RUN_NAME_PATTERN = rf'(?P<setting>[a-z]+)_(?P<prompts>{PROMPT_SET_PATTERN})_s(?P<seed>\d+)'
+
 WORLD_DIM = 20
 DEFAULT_SEED = 42
 

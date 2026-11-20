@@ -110,3 +110,28 @@
 - A run is excluded from tables only if its cross-check mismatched, could not run, was skipped, or its
   per_sample.jsonl is stale. Every exclusion and every never-evaluated run dir is printed in a `!!!` block by
   `make report` and listed under "Attention" in RESULTS.md. A failed `make eval` no longer stops `make report`.
+
+## norsnorb_first100_s42 (Ivan's Colab No RS/no RB run, first 100 prompts; evaluated 2026-11-20)
+
+- Pipeline test, **kept out of tables** (`exclude_from_tables` in its run_meta.json); Ivan's full 250-prompt run
+  replaces it. run_meta.json written by the eval side with only known facts: seed 42 is assumed (not recorded),
+  GPU unconfirmed (probably a Colab T4), all other provenance fields null.
+- Prompts are the first 100 of eval_dataset.json in order (verified), **not a random sample**. Category mix is close
+  to full250 (tables 28% vs 32%, chairs 18% vs 20%), but these prompts' ground-truth builds are smaller on average
+  (110.8 vs 119.5 bricks), and validity falls with build size (GT >= 140 bricks: 4/20 valid, 0 stable), so this run
+  may slightly overstate validity relative to the full 250.
+- Results: valid 34.0% [25.0, 43.0], stable 13.0% [7.0, 20.0] (n=100); paper 37.2% / 12.8%, both inside our CIs.
+  Mean stab. 0.968 [0.953, 0.980] vs 0.956; min. stab. 0.344 [0.197, 0.504] vs 0.325 (n=34 valid builds).
+  All 66 invalid builds collide; 3 of them also use a brick size not in the library (3x1, 3x1, 4x6). No
+  out-of-bounds or empty builds. Rollbacks and rejections are 0 everywhere, consistent with the flags.
+- Time: median 26.4 s/build [23.0, 29.5], mean 34.5 s (6.3-119.7 s); correlation with brick count 0.998, i.e.
+  time is token generation. Not comparable to the paper's 40.8 s (different setting and hardware).
+- Cross-check vs upstream evaluate: MATCH on 100/100 rows (the 3 off-library builds also collide, so upstream
+  rejects them as invalid before its stability solver and does not crash).
+- Identical outputs for 4 paraphrased "rectangular table with four legs" prompts: upstream re-seeds (seed 42)
+  before every prompt, so near-identical prompts follow the same sampling path. Not a bug, but samples are not
+  independent across similar prompts.
+- What this run changed in the pipeline: `firstN` prompt sets; `invalid_reason` per build; a brick size not in the
+  library is now an invalid reason, not a parse error (rows are left out of the cross-check only if upstream would
+  really crash); `partial` / `exclude_from_tables` in run_meta.json; check-run warns on null provenance fields;
+  run dirs with an unrecognized name are listed loudly instead of being skipped with one line.

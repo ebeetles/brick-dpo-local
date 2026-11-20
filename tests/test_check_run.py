@@ -51,6 +51,23 @@ def test_rollbacks_in_rs_only_run_is_error(tmp_path):
     assert any('rollback off' in m for m in levels(check_run(make_run(tmp_path, 'rs_full250_s42', rows)), ERROR))
 
 
+def test_first_n_run_with_null_meta_fields_warns(tmp_path):
+    meta = {'setting': 'norsnorb', 'prompts': 'first3', 'seed': 42, 'gpu': None, 'partial': True,
+            'exclude_from_tables': 'pipeline test'}
+    findings = check_run(make_run(tmp_path, 'norsnorb_first3_s42', [brickgpt_row(p) for p in PROMPTS[:3]], meta))
+    assert levels(findings, ERROR) == []
+    warnings = ' | '.join(levels(findings, WARN))
+    assert 'null) fields: gpu' in warnings and 'partial' in warnings and 'excludes this run from tables' in warnings
+
+
+def test_off_library_brick_warns_with_crash_count(tmp_path):
+    rows = [brickgpt_row(p) for p in PROMPTS[:2]]
+    rows[0] = rows[0] | {'output': '3x1 (0,0,0)\n'}                    # otherwise valid: would crash upstream
+    rows[1] = rows[1] | {'output': '2x4 (0,0,0)\n3x1 (0,0,0)\n'}     # also collides: upstream says invalid
+    warnings = ' | '.join(levels(check_run(make_run(tmp_path, 'rs_full250_s42', rows)), WARN))
+    assert '2 builds use brick sizes not in the library (3x1)' in warnings and '1 of them are otherwise valid' in warnings
+
+
 def test_meta_disagreeing_with_folder_name_is_error(tmp_path):
     rows = [brickgpt_row(p) for p in PROMPTS[:3]]
     findings = check_run(make_run(tmp_path, 'rs_full250_s42', rows, {'setting': 'full', 'seed': 42}))
