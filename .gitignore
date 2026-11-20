@@ -1,0 +1,11 @@
+runs/*
+!runs/NOTES.md
+!runs/prompts/
+!runs/RESULTS.md
+third_party/
+__pycache__/
+*.pyc
+report/*.aux
+report/*.log
+report/*.fls
+report/*.fdb_latexmk
